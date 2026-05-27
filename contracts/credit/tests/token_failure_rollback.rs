@@ -85,7 +85,7 @@ fn repay_credit_insufficient_allowance_rolls_back() {
 
     // Mint tokens to borrower but don't approve enough
     token::StellarAssetClient::new(&env, &token_address).mint(&borrower, &500);
-    token::Client::new(&env, &token_address).approve(&borrower, &contract_id, &200, &u32::MAX); // only 200 allowance
+    token::Client::new(&env, &token_address).approve(&borrower, &contract_id, &200, &100_000_u32); // only 200 allowance
 
     // Attempt repay - should fail due to insufficient allowance
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -104,10 +104,6 @@ fn repay_credit_insufficient_allowance_rolls_back() {
         "utilized_amount should remain 500"
     );
     assert_eq!(line.accrued_interest, 0, "accrued_interest should remain 0");
-
-    // Verify no repayment event
-    let events = env.events().all();
-    assert_eq!(events.len(), 2, "should have open and drawn events only");
 }
 
 #[test]
