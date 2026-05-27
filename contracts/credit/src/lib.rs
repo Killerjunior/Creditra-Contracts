@@ -15,6 +15,15 @@ mod config;
 pub mod events;
 mod freeze;
 mod lifecycle;
+mod query;
+mod accrual;
+mod math_utils;
+mod risk;
+mod storage;
+pub mod types;
+use crate::storage::{DataKey, rate_cfg_key};
+use crate::auth::require_admin_auth;
+use crate::storage::{clear_reentrancy_guard, set_reentrancy_guard};
 mod risk;
 mod storage;
 pub mod types;
@@ -44,6 +53,7 @@ use crate::types::{ContractError, CreditLineData, CreditStatus, GracePeriodConfi
 use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Env, Symbol};
 
 pub const CONTRACT_API_VERSION: (u32, u32, u32) = (1, 0, 0);
+
 
 #[allow(dead_code)]
 const SECONDS_PER_YEAR: u64 = 31_536_000;
@@ -1305,6 +1315,12 @@ mod test_coverage {
         let (client, _admin, borrower) = base(&env);
         client.open_credit_line(&borrower, &500_i128, &300_u32, &70_u32);
     }
+
+#[cfg(test)]
+mod test_smoke_coverage {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::token::{Client as TokenClient, StellarAssetClient};
 
     #[test]
     fn lifecycle_suspend_and_reinstate() {
