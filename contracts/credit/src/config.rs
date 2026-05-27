@@ -14,6 +14,9 @@
 use crate::auth::require_admin_auth;
 use crate::storage::admin_key;
 use crate::storage::DataKey;
+//! Config module: contract initialization.
+
+use crate::storage::admin_key;
 use crate::types::ContractError;
 use soroban_sdk::{Address, Env};
 
@@ -63,4 +66,9 @@ pub fn set_liquidity_source(env: Env, reserve_address: Address) {
     env.storage()
         .instance()
         .set(&DataKey::LiquiditySource, &reserve_address);
+    let key = admin_key(&env);
+    if env.storage().instance().has(&key) {
+        env.panic_with_error(ContractError::AlreadyInitialized);
+    }
+    env.storage().instance().set(&key, &admin);
 }
