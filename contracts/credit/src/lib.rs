@@ -20,6 +20,9 @@ mod math_utils;
 mod risk;
 mod storage;
 pub mod types;
+use crate::storage::{DataKey, rate_cfg_key};
+use crate::auth::require_admin_auth;
+use crate::storage::{clear_reentrancy_guard, set_reentrancy_guard};
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, token, Address, Env, Symbol,
@@ -49,10 +52,6 @@ fn admin_key(env: &Env) -> Symbol {
 }
 
 
-use crate::events::{publish_drawn_event, publish_repayment_event, DrawnEvent, RepaymentEvent};
-use crate::storage::{clear_reentrancy_guard, set_reentrancy_guard, DataKey};
-use crate::types::{ContractError, CreditLineData, CreditStatus, RateChangeConfig};
-use soroban_sdk::{contract, contractimpl, token, Address, Env};
 
 #[contract]
 pub struct Credit;
@@ -460,32 +459,6 @@ impl Credit {
         env.storage().persistent().get(&borrower)
     }
 
-    /// Reinstate a defaulted credit line to Active (admin only).
-    pub fn reinstate_credit_line(env: Env, borrower: Address) {
-        require_admin_auth(&env);
-        let mut credit_line: CreditLineData = env
-            .storage()
-            .persistent()
-            .get(&borrower)
-            .expect("Credit line not found");
-        if credit_line.status != CreditStatus::Defaulted {
-            panic!("credit line is not defaulted");
-        }
-        credit_line.status = CreditStatus::Active;
-        env.storage().persistent().set(&borrower, &credit_line);
-        publish_credit_line_event(
-            &env,
-            (symbol_short!("credit"), symbol_short!("reinstate")),
-            CreditLineEvent {
-                event_type: symbol_short!("reinstate"),
-                borrower: borrower.clone(),
-                status: CreditStatus::Active,
-                credit_limit: credit_line.credit_limit,
-                interest_rate_bps: credit_line.interest_rate_bps,
-                risk_score: credit_line.risk_score,
-            },
-        );
-    }
 }
 
 #[cfg(test)]

@@ -31,8 +31,7 @@ use soroban_sdk::Env;
 ///
 /// # Rounding
 /// Truncates toward zero via [`prorate_interest`]. Sub-unit interest amounts
-/// (e.g. tiny principals or very short elapsed windows) accrue as `0` for
-/// that period and are not carried forward.
+/// accrue as `0` for that period and are not carried forward.
 ///
 /// # Parameters
 /// - `env`:         The Soroban environment; used to read the current ledger
@@ -47,11 +46,8 @@ use soroban_sdk::Env;
 /// `utilized_amount == 0`, or the computed amount truncates to zero).
 ///
 /// # Panics
-/// - If `principal * rate_bps * elapsed` overflows `i128` (see
-///   [`prorate_interest`] for bounds). Not expected under realistic credit
-///   limits and rates.
-/// - If adding newly accrued interest to `credit_line.accrued_interest`
-///   overflows `i128` (would require astronomically large cumulative interest).
+/// - If `principal * rate_bps * elapsed` overflows `i128`.
+/// - If adding interest to `credit_line.accrued_interest` overflows `i128`.
 ///
 /// # Example
 /// ```text
