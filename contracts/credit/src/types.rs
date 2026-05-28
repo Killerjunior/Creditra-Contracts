@@ -233,6 +233,4 @@ pub struct ProtocolConfig {
     pub liquidity_token: Option<Address>,
     /// Configured liquidity source.
     pub liquidity_source: Option<Address>,
-    /// Configured rate change limits.
-    pub rate_change_config: Option<RateChangeConfig>,
 }

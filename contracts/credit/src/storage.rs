@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-use crate::types::ContractError;
+use crate::types::{ContractError, CreditLineData};
 use soroban_sdk::{contracttype, Address, Env, Symbol};
 
 /// Storage keys used in instance and persistent storage.
@@ -35,8 +35,6 @@ pub enum DataKey {
     /// Per-borrower max utilization ratio cap in basis points (e.g. 8000 = 80%).
     /// When set, draw_credit enforces: utilized_amount <= credit_limit * cap_bps / 10_000.
     UtilizationCapBps(Address),
-    /// Storage schema version, written once during init.
-    SchemaVersion,
 }
 
 /// Maximum number of credit lines returned per page.

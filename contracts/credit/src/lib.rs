@@ -16,14 +16,7 @@ pub mod events;
 mod freeze;
 mod lifecycle;
 mod query;
-mod accrual;
 mod math_utils;
-mod risk;
-mod storage;
-pub mod types;
-use crate::storage::{DataKey, rate_cfg_key};
-use crate::auth::require_admin_auth;
-use crate::storage::{clear_reentrancy_guard, set_reentrancy_guard};
 mod risk;
 mod storage;
 pub mod types;
@@ -45,7 +38,8 @@ use crate::events::{
 use crate::math_utils::{mul_div, Rounding};
 use crate::storage::{
     admin_key, assert_not_paused, clear_reentrancy_guard, proposed_admin_key, proposed_at_key,
-    rate_cfg_key, set_reentrancy_guard, DataKey,
+    rate_cfg_key, set_reentrancy_guard, DataKey, persist_credit_line,
+    get_borrower_by_credit_line_id, MAX_ENUMERATION_LIMIT,
     set_borrower_blocked as storage_set_borrower_blocked,
     set_borrower_unblocked,
     is_borrower_blocked as storage_is_borrower_blocked,
@@ -816,12 +810,10 @@ impl Credit {
     ///
     /// - `liquidity_token`: `None` until `set_liquidity_token` is called.
     /// - `liquidity_source`: `None` until `init` is called (defaults to contract address).
-    /// - `rate_change_config`: `None` until `set_rate_change_limits` is called.
     pub fn get_protocol_config(env: Env) -> ProtocolConfig {
         ProtocolConfig {
             liquidity_token: env.storage().instance().get(&DataKey::LiquidityToken),
             liquidity_source: env.storage().instance().get(&DataKey::LiquiditySource),
-            rate_change_config: env.storage().instance().get(&rate_cfg_key(&env)),
         }
     }
 }
@@ -1380,12 +1372,52 @@ mod test_coverage {
         let (client, _admin, borrower) = base(&env);
         client.open_credit_line(&borrower, &500_i128, &300_u32, &70_u32);
     }
+}
 
 #[cfg(test)]
 mod test_smoke_coverage {
     use super::*;
     use soroban_sdk::testutils::Address as _;
     use soroban_sdk::token::{Client as TokenClient, StellarAssetClient};
+
+    fn base(env: &Env) -> (CreditClient, Address, Address) {
+        env.mock_all_auths();
+        let admin = Address::generate(env);
+        let contract_id = env.register(Credit, ());
+        let client = CreditClient::new(env, &contract_id);
+        client.init(&admin);
+        let borrower = Address::generate(env);
+        (client, admin, borrower)
+    }
+
+    fn setup(
+        env: &Env,
+        borrower: &Address,
+        credit_limit: i128,
+        reserve: i128,
+        draw_amount: i128,
+    ) -> (CreditClient, Address, Address, Address) {
+        env.mock_all_auths();
+        let admin = Address::generate(env);
+        let contract_id = env.register(Credit, ());
+        let client = CreditClient::new(env, &contract_id);
+        client.init(&admin);
+        let token_id = env.register_stellar_asset_contract_v2(Address::generate(env));
+        let token = token_id.address();
+        client.set_liquidity_token(&token);
+        if reserve > 0 {
+            StellarAssetClient::new(env, &token).mint(&contract_id, &reserve);
+        }
+        client.open_credit_line(borrower, &credit_limit, &300_u32, &70_u32);
+        if draw_amount > 0 {
+            client.draw_credit(borrower, &draw_amount);
+        }
+        (client, token, contract_id, admin)
+    }
+
+    fn approve(env: &Env, token: &Address, from: &Address, spender: &Address, amount: i128) {
+        TokenClient::new(env, token).approve(from, spender, &amount, &u32::MAX);
+    }
 
     #[test]
     fn lifecycle_suspend_and_reinstate() {
@@ -1605,40 +1637,9 @@ mod test_smoke_coverage {
     fn lifecycle_suspend_non_active_reverts() {
         let env = Env::default();
         let (client, _admin, borrower) = base(&env);
+        client.open_credit_line(&borrower, &500_i128, &300_u32, &70_u32);
         client.suspend_credit_line(&borrower);
         client.suspend_credit_line(&borrower); // already suspended
-        client.default_credit_line(&borrower);
-        client.reinstate_credit_line(&borrower, &CreditStatus::Active);
-
-        sac.mint(&borrower, &100_i128);
-        TokenClient::new(&env, &token_address).approve(
-            &borrower,
-            &contract_id,
-            &100_i128,
-            &1000_u32,
-        );
-        assert!(
-            base_rate_bps <= crate::risk::MAX_INTEREST_RATE_BPS,
-            "base_rate_bps exceeds MAX_INTEREST_RATE_BPS"
-        );
-        let cfg = RateFormulaConfig {
-            base_rate_bps,
-            slope_bps_per_score,
-            min_rate_bps,
-            max_rate_bps,
-        };
-        env.storage().instance().set(&rate_formula_key(&env), &cfg);
-        publish_rate_formula_config_event(&env, true);
-    }
-
-    pub fn get_rate_formula_config(env: Env) -> Option<RateFormulaConfig> {
-        risk::get_rate_formula_config(env)
-    }
-
-    pub fn clear_rate_formula_config(env: Env) {
-        require_admin_auth(&env);
-        env.storage().instance().remove(&rate_formula_key(&env));
-        publish_rate_formula_config_event(&env, false);
     }
 
     /// Double-init does not overwrite the original admin.
