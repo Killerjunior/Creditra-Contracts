@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
+#![cfg_attr(coverage_nightly, coverage(off))]
 
-//! Core data types for the Credit contract.
+//! Core data types for the Creditra contract.
 
 use soroban_sdk::{contracttype, Address};
 
@@ -21,6 +23,45 @@ pub enum CreditStatus {
 }
 
 /// Errors that can be returned by the Credit contract.
+///
+/// # Stability guarantee
+/// These discriminants are **permanent**. Never reorder or renumber existing
+/// variants — doing so would break deployed SDK clients. New variants must be
+/// appended at the end with the next available integer.
+///
+/// # Discriminant table (source of truth)
+/// | Code | Variant                        | Description |
+/// |------|--------------------------------|-------------|
+/// | 1    | `Unauthorized`                 | Caller is not authorized |
+/// | 2    | `NotAdmin`                     | Caller lacks admin privileges |
+/// | 3    | `CreditLineNotFound`           | Credit line does not exist |
+/// | 4    | `CreditLineClosed`             | Credit line is permanently closed |
+/// | 5    | `InvalidAmount`                | Amount is zero, negative, or otherwise invalid |
+/// | 6    | `OverLimit`                    | Draw would exceed the credit limit |
+/// | 7    | `NegativeLimit`                | Credit limit cannot be negative |
+/// | 8    | `RateTooHigh`                  | Interest rate exceeds the maximum allowed |
+/// | 9    | `ScoreTooHigh`                 | Risk score exceeds the maximum allowed (100) |
+/// | 10   | `UtilizationNotZero`           | Operation requires zero utilization |
+/// | 11   | `Reentrancy`                   | Reentrancy detected during cross-contract call |
+/// | 12   | `Overflow`                     | Arithmetic overflow during calculation |
+/// | 13   | `LimitDecreaseRequiresRepayment` | Limit decrease below utilized amount |
+/// | 14   | `AlreadyInitialized`           | Contract already initialized |
+/// | 15   | `AdminAcceptTooEarly`          | Admin acceptance attempted before delay elapsed |
+/// | 16   | `BorrowerBlocked`              | Borrower is on the blocked list |
+/// | 17   | `DrawExceedsMaxAmount`         | Draw amount exceeds per-transaction cap |
+/// | 18   | `Paused`                       | Protocol is paused; operation blocked by circuit breaker |
+/// | 19   | `DrawsFrozen`                  | Draws are globally frozen |
+/// | 20   | `CreditLineSuspended`          | Credit line is suspended |
+/// | 21   | `CreditLineDefaulted`          | Credit line is defaulted |
+/// | 22   | `MissingLiquidityToken`        | Liquidity token is not configured |
+/// | 23   | `MissingLiquiditySource`       | Liquidity source is not configured |
+/// | 24   | `InsufficientLiquidityReserve` | Reserve balance cannot cover the draw |
+/// | 25   | `LiquidityTokenCallFailed`     | Liquidity token call failed where observable |
+/// | 26   | `InsufficientRepaymentAllowance` | Borrower allowance cannot cover repayment |
+/// | 27   | `InsufficientRepaymentBalance` | Borrower balance cannot cover repayment |
+/// | 28   | `RepayExceedsMaxAmount`        | Repay amount exceeds per-transaction cap |
+/// | 29   | `DrawCooldownActive`          | Borrower attempted to draw before cooldown elapsed |
+/// | 30   | `ExposureCapExceeded`         | Draw would exceed the global protocol exposure cap |
 #[soroban_sdk::contracterror]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -53,11 +94,43 @@ pub enum ContractError {
     LimitDecreaseRequiresRepayment = 13,
     /// Contract has already been initialized; `init` may only be called once.
     AlreadyInitialized = 14,
-    DrawExceedsMaxAmount = 14, 
+    /// Admin acceptance attempted before the delay window has elapsed.
+    AdminAcceptTooEarly = 15,
+    /// Borrower is blocked from drawing credit.
+    BorrowerBlocked = 16,
+    /// The requested draw exceeds the configured per-transaction maximum.
+    DrawExceedsMaxAmount = 17,
+    /// Protocol is paused by the emergency circuit breaker.
+    Paused = 18,
+    /// All draws are globally frozen by admin for liquidity reserve operations.
+    DrawsFrozen = 19,
+    /// Action cannot be performed because the credit line is suspended.
+    CreditLineSuspended = 20,
+    /// Action cannot be performed because the credit line is defaulted.
+    CreditLineDefaulted = 21,
+    /// Liquidity token has not been configured.
+    MissingLiquidityToken = 22,
+    /// Liquidity source has not been configured.
+    MissingLiquiditySource = 23,
+    /// Liquidity reserve balance is below the requested draw amount.
+    InsufficientLiquidityReserve = 24,
+    /// Liquidity token call failed where the contract can observe it.
+    LiquidityTokenCallFailed = 25,
+    /// Borrower's token allowance is below the effective repayment amount.
+    InsufficientRepaymentAllowance = 26,
+    /// Borrower's token balance is below the effective repayment amount.
+    InsufficientRepaymentBalance = 27,
+    /// The requested repay exceeds the configured per-transaction maximum.
+    RepayExceedsMaxAmount = 28,
+    /// Borrower attempted to draw again before the cooldown interval elapsed.
+    DrawCooldownActive = 29,
+    /// Treasury address is not configured when attempting a treasury withdrawal.
+    TreasuryNotSet = 30,
 }
 
 /// Stored credit line data for a borrower.
 #[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CreditLineData {
     /// Address of the borrower.
     pub borrower: Address,
@@ -80,11 +153,28 @@ pub struct CreditLineData {
     /// Ledger timestamp of the last interest accrual calculation.
     /// Zero means no accrual has been calculated yet.
     pub last_accrual_ts: u64,
+    /// Ledger timestamp when the credit line was most recently suspended.
+    /// Zero when the line has never been suspended or has been reinstated.
+    /// Used by the grace period logic to determine whether the waiver window
+    /// is still active.
+    pub suspension_ts: u64,
+}
+
+/// Optional installment repayment schedule attached to a credit line.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RepaymentSchedule {
+    /// Required repayment amount for each installment period.
+    pub amount_per_period: i128,
+    /// Duration of a single installment period in seconds.
+    pub period_seconds: u64,
+    /// Timestamp at which the next installment is due.
+    pub next_due_ts: u64,
 }
 
 /// Admin-configurable limits on interest-rate changes.
 #[contracttype]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RateChangeConfig {
     /// Maximum absolute change in `interest_rate_bps` allowed per single update.
     pub max_rate_change_bps: u32,
@@ -119,3 +209,45 @@ pub struct RateFormulaConfig {
     /// Maximum allowed computed rate (ceiling), must be <= 10_000.
     pub max_rate_bps: u32,
 }
+
+/// Grace period configuration for Suspended credit lines.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GracePeriodConfig {
+    /// Duration of the grace window in seconds.
+    pub grace_period_seconds: u64,
+    /// Type of waiver to apply during the grace period.
+    pub waiver_mode: GraceWaiverMode,
+    /// Reduced rate to apply when waiver_mode is ReducedRate.
+    pub reduced_rate_bps: u32,
+}
+
+/// Grace period waiver modes.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GraceWaiverMode {
+    /// Full waiver - zero interest during grace period.
+    FullWaiver = 0,
+    /// Reduced rate - apply reduced_rate_bps during grace period.
+    ReducedRate = 1,
+}
+
+/// Event emitted when the rate formula config is set or cleared.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RateFormulaConfigEvent {
+    /// `true` when a config was set; `false` when cleared.
+    pub enabled: bool,
+}
+
+<<<<<<< HEAD
+=======
+/// Global protocol configuration.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProtocolConfig {
+    /// Configured liquidity token.
+    pub liquidity_token: Option<Address>,
+    /// Configured liquidity source.
+    pub liquidity_source: Option<Address>,
+}
+>>>>>>> upstream/main
