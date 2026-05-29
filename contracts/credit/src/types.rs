@@ -124,14 +124,8 @@ pub enum ContractError {
     RepayExceedsMaxAmount = 28,
     /// Borrower attempted to draw again before the cooldown interval elapsed.
     DrawCooldownActive = 29,
-    /// Treasury address is not configured when attempting a treasury withdrawal.
-    TreasuryNotSet = 30,
-    /// Oracle price deviates more than the configured max_deviation_bps from the last accepted price.
-    OraclePriceDeviation = 31,
-    /// Oracle price timestamp is older than the configured max_age_seconds.
-    OraclePriceStale = 32,
-    /// Oracle price is zero or negative, which is invalid.
-    OraclePriceInvalid = 33,
+    /// Collateral ratio would fall below the required minimum.
+    CollateralRatioBelowMinimum = 31, // added error variant
 }
 
 /// Stored credit line data for a borrower.
@@ -265,8 +259,6 @@ pub struct RateFormulaConfigEvent {
     pub enabled: bool,
 }
 
-<<<<<<< HEAD
-=======
 /// Global protocol configuration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProtocolConfig {
@@ -275,4 +267,3 @@ pub struct ProtocolConfig {
     /// Configured liquidity source.
     pub liquidity_source: Option<Address>,
 }
->>>>>>> upstream/main

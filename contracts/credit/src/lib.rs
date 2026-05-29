@@ -14,7 +14,7 @@ mod borrow;
 mod config;
 pub mod events;
 mod freeze;
-mod lifecycle;
+mod collateral;
 mod query;
 mod math_utils;
 mod risk;
@@ -311,6 +311,22 @@ impl Credit {
         if updated_utilized > credit_line.credit_limit {
             clear_reentrancy_guard(&env);
             env.panic_with_error(ContractError::OverLimit);
+        }
+
+        // Enforce minimum collateral ratio
+        let min_ratio_bps = crate::storage::get_min_collateral_ratio_bps(&env).unwrap_or(15000);
+        let current_collateral = crate::storage::get_collateral_balance(&env, &borrower);
+        let required_collateral = (updated_utilized as i128)
+            .checked_mul(min_ratio_bps as i128)
+            .unwrap_or_else(|| {
+                clear_reentrancy_guard(&env);
+                env.panic_with_error(ContractError::Overflow)
+            })
+            / 10_000;
+
+        if current_collateral < required_collateral {
+            clear_reentrancy_guard(&env);
+            env.panic_with_error(ContractError::CollateralRatioBelowMinimum);
         }
 
         // Enforce per-borrower utilization cap if configured.
@@ -748,6 +764,18 @@ impl Credit {
     /// Get the global total utilized accumulator.
     pub fn get_total_utilized(env: Env) -> i128 {
         crate::storage::get_total_utilized(&env)
+    }
+
+    pub fn deposit_collateral(env: Env, borrower: Address, amount: i128) {
+        crate::collateral::deposit_collateral(&env, &borrower, amount);
+    }
+
+    pub fn withdraw_collateral(env: Env, borrower: Address, amount: i128) {
+        crate::collateral::withdraw_collateral(&env, &borrower, amount);
+    }
+
+    pub fn get_collateral(env: Env, borrower: Address) -> i128 {
+        crate::collateral::get_collateral(&env, &borrower)
     }
 
     /// Set the maximum total utilization allowed across all credit lines (admin only).

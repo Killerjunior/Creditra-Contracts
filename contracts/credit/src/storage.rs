@@ -37,20 +37,9 @@ pub enum DataKey {
     UtilizationCapBps(Address),
     /// Per-borrower installment schedule for delinquency tracking.
     RepaymentSchedule(Address),
-    /// Global maximum total exposure cap across all credit lines.
-    MaxTotalExposure,
-    /// Protocol fee in basis points collected on draws.
-    ProtocolFeeBps,
-    /// Treasury address for fee collection.
-    TreasuryAddress,
-    /// Accumulated treasury balance held in contract.
-    TreasuryBalance,
-    /// Oracle circuit-breaker configuration (max_deviation_bps, max_age_seconds).
-    OracleConfig,
-    /// Last accepted oracle price (i128, scaled by 1e7 or as reported).
-    OracleLastPrice,
-    /// Timestamp of the last accepted oracle price.
-    OracleLastPriceTs,
+    CollateralToken,
+    MinCollateralRatioBps,
+    CollateralBalance(Address),
 }
 
 /// Maximum number of credit lines returned per page.
@@ -326,24 +315,44 @@ pub fn is_borrower_blocked(env: &Env, borrower: &Address) -> bool {
     }
 }
 
-/// Get the configured minimum draw interval in seconds.
-pub fn get_draw_min_interval(env: &Env) -> Option<u64> {
-    env.storage()
-        .instance()
-        .get(&DataKey::DrawMinIntervalSeconds)
+/// Get the collateral token address, if set.
+pub fn get_collateral_token(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::LiquidityToken)
 }
 
-/// Set or clear the configured minimum draw interval in seconds.
-pub fn set_draw_min_interval(env: &Env, interval_seconds: u64) {
-    if interval_seconds == 0 {
-        env.storage()
-            .instance()
-            .remove(&DataKey::DrawMinIntervalSeconds);
+/// Set the collateral token address (admin only).
+pub fn set_collateral_token(env: &Env, token: &Address) {
+    // Admin auth assumed by caller.
+    env.storage().instance().set(&DataKey::LiquidityToken, token);
+}
+
+// Get the collateral balance for a borrower (default 0).
+pub fn get_collateral_balance(env: &Env, borrower: &Address) -> i128 {
+    let key = DataKey::CollateralBalance(borrower.clone());
+    if env.storage().persistent().has(&key) {
+        bump_persistent_ttl(env, &key);
+        env.storage().persistent().get(&key).unwrap_or(0)
     } else {
-        env.storage()
-            .instance()
-            .set(&DataKey::DrawMinIntervalSeconds, &interval_seconds);
+        0
     }
+}
+
+// Set the collateral balance for a borrower (overwrites existing).
+pub fn set_collateral_balance(env: &Env, borrower: &Address, amount: i128) {
+    let key = DataKey::CollateralBalance(borrower.clone());
+    env.storage().persistent().set(&key, &amount);
+    bump_persistent_ttl(env, &key);
+}
+
+/// Get the minimum collateral ratio in basis points, if set.
+pub fn get_min_collateral_ratio_bps(env: &Env) -> Option<u32> {
+    env.storage().instance().get(&DataKey::MinCollateralRatioBps)
+}
+
+/// Set the minimum collateral ratio in basis points (admin only). Cap at 10000 bps.
+pub fn set_min_collateral_ratio_bps(env: &Env, ratio_bps: u32) {
+    assert!(ratio_bps <= 10_000, "ratio_bps must be <= 10000");
+    env.storage().instance().set(&DataKey::MinCollateralRatioBps, &ratio_bps);
 }
 
 /// Get the last successful draw timestamp for a borrower.
