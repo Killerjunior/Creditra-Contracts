@@ -1,6 +1,60 @@
 // SPDX-License-Identifier: MIT
 
 //! Risk parameter management for credit lines.
+//!
+//! # What
+//!
+//! Owns the rate-formula primitives and the `update_risk_parameters`
+//! entrypoint:
+//!
+//! - [`compute_rate_from_score`] — the piecewise-linear formula
+//!   `r(k) = clamp(b + k * s, r_min, min(r_max, 10_000))` documented in
+//!   [`docs/RISK_PRICING.md`](../../../docs/RISK_PRICING.md) §2.1.
+//! - [`update_risk_parameters`] — the admin path that applies a new
+//!   `(credit_limit, interest_rate_bps, risk_score)` triple, with the rate
+//!   either supplied or formula-derived, then bounded by:
+//!     - the per-borrower [`set_borrower_rate_floor`] floor,
+//!     - the magnitude+cadence cap encoded by [`RateChangeConfig`] in
+//!       `Symbol("rate_cfg")` instance storage,
+//!     - the global ceiling [`MAX_INTEREST_RATE_BPS`] = 10_000.
+//! - [`set_rate_change_limits_legacy`] — configure the magnitude+cadence
+//!   cap.
+//! - [`set_penalty_surcharge_bps`] — configure the additive surcharge
+//!   applied to delinquent lines during accrual (see [`crate::accrual`]).
+//! - [`set_borrower_rate_floor`] — per-borrower minimum.
+//!
+//! # How
+//!
+//! All rate arithmetic uses saturating `u32` multiplication; a misconfigured
+//! `b + 100 * s` saturates rather than overflowing, then the clamp brings
+//! it back into the declared `[r_min, r_max]` range. The clamp upper bound
+//! is the minimum of the configured `max_rate_bps` and the protocol-wide
+//! `MAX_INTEREST_RATE_BPS`, so even a misconfigured formula cannot exceed
+//! 10_000 bps.
+//!
+//! `update_risk_parameters` invokes [`crate::accrual::apply_accrual`]
+//! before mutating, so the rate change is applied against capitalized
+//! interest — the borrower is never charged the new rate on debt accrued
+//! under the old rate.
+//!
+//! # Why
+//!
+//! The clamp + saturating combo is the contract's defense against:
+//!
+//! 1. **Admin compromise leading to 1000 % APR.** The 10_000 bps ceiling is
+//!    hard-coded; even admin cannot bypass it.
+//! 2. **Per-step rate shock.** `RateChangeConfig` bounds the size of each
+//!    increment AND the minimum interval between increments. A compromised
+//!    admin can at most raise rates by `max_rate_change_bps` per
+//!    `rate_change_min_interval` window, giving borrowers time to repay.
+//! 3. **Formula misconfiguration.** `min_rate_bps > max_rate_bps` is
+//!    rejected at config-set time; runtime evaluation cannot produce a
+//!    rate outside the `[r_min, r_max]` ∩ `[0, 10_000]` interval.
+//!
+//! See [`docs/risk-based-rate-formula.md`](../../../docs/risk-based-rate-formula.md)
+//! for the normative formula spec and
+//! [`docs/SECURITY.md`](../../../docs/SECURITY.md) §2 (threats T6, T8) for
+//! the threat-model justification.
 
 #![warn(missing_docs)]
 
