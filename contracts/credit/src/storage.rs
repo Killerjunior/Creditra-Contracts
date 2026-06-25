@@ -59,7 +59,7 @@
 //! full per-variant tier table.
 
 use crate::types::{ContractError, CreditLineData, RepaymentSchedule};
-use soroban_sdk::{contracttype, Address, Env, Symbol};
+use soroban_sdk::{contracttype, Address, BytesN, Env, Symbol};
 
 /// Storage keys used in instance and persistent storage.
 ///
@@ -153,6 +153,8 @@ pub enum DataKey {
     OracleLastPrice,
     /// Timestamp of the last accepted oracle price.
     OracleLastPriceTs,
+    /// Current WASM hash of this contract, used during upgrades.
+    CurrentWasmHash,
 }
 
 /// Maximum number of credit lines returned per page.
@@ -421,11 +423,18 @@ pub fn get_borrower_rate_floor(env: &Env, borrower: &Address) -> Option<u32> {
         .get(&DataKey::RateFloorBps(borrower.clone()))
 }
 
-/// Set a per-borrower max utilization ratio cap in basis points (admin only).
-pub fn set_utilization_cap_bps(env: &Env, borrower: &Address, cap_bps: u32) {
-    env.storage()
-        .persistent()
-        .set(&DataKey::UtilizationCapBps(borrower.clone()), &cap_bps);
+/// Set or clear a per-borrower max utilization ratio cap in basis points (admin only).
+pub fn set_utilization_cap_bps(env: &Env, borrower: &Address, cap_bps: Option<u32>) {
+    match cap_bps {
+        Some(bps) => env
+            .storage()
+            .persistent()
+            .set(&DataKey::UtilizationCapBps(borrower.clone()), &bps),
+        None => env
+            .storage()
+            .persistent()
+            .remove(&DataKey::UtilizationCapBps(borrower.clone())),
+    }
 }
 
 /// Get the per-borrower max utilization ratio cap, if set.
@@ -669,6 +678,20 @@ pub fn set_oracle_last_price(env: &Env, price: i128, ts: u64) {
     env.storage()
         .instance()
         .set(&DataKey::OracleLastPriceTs, &ts);
+}
+
+// ── Current WASM hash for upgrade tracking ──────────────────────────────────
+
+/// Get the stored current WASM hash of this contract.
+pub fn get_current_wasm_hash(env: &Env) -> Option<BytesN<32>> {
+    env.storage().instance().get(&DataKey::CurrentWasmHash)
+}
+
+/// Store the current WASM hash of this contract.
+pub fn set_current_wasm_hash(env: &Env, wasm_hash: &BytesN<32>) {
+    env.storage()
+        .instance()
+        .set(&DataKey::CurrentWasmHash, wasm_hash);
 }
 
 // ── Penalty surcharge for delinquent lines ───────────────────────────────────

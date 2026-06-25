@@ -1187,7 +1187,7 @@ impl Credit {
     pub fn block_borrower(env: Env, admin: Address, borrower: Address) {
         admin.require_auth();
         require_admin_auth(&env);
-        storage_set_borrower_blocked(&env, &borrower);
+        storage_set_borrower_blocked(&env, &borrower, true);
         publish_borrower_blocked_event(&env, &borrower, true);
     }
 
@@ -1225,7 +1225,7 @@ impl Credit {
             );
         }
         for borrower in borrowers.iter() {
-            storage_set_borrower_blocked(&env, &borrower);
+            storage_set_borrower_blocked(&env, &borrower, true);
             publish_borrower_blocked_event(&env, &borrower, true);
         }
     }
@@ -1444,7 +1444,8 @@ impl Credit {
         require_admin_auth(&env);
 
         // Retrieve the current WASM hash before upgrade for event emission.
-        let old_wasm_hash = env.deployer().get_current_contract_wasm();
+        let old_wasm_hash = crate::storage::get_current_wasm_hash(&env)
+            .unwrap_or_else(|| BytesN::from_array(&env, &[0u8; 32]));
 
         // Bump schema version to track upgrade history.
         let current_version = crate::storage::get_schema_version(&env).unwrap_or(SCHEMA_VERSION);
@@ -1453,6 +1454,9 @@ impl Credit {
         // Perform the atomic WASM upgrade.
         env.deployer()
             .update_current_contract_wasm(new_wasm_hash.clone());
+
+        // Store the new WASM hash for future upgrade tracking.
+        crate::storage::set_current_wasm_hash(&env, &new_wasm_hash);
 
         // Emit upgrade event for off-chain indexers and audit trails.
         publish_contract_upgraded_event(
