@@ -10,8 +10,7 @@ mod tests {
 
     use soroban_sdk::testutils::Events as _;
     use soroban_sdk::testutils::Ledger as _;
-    use soroban_sdk::testutils::{Address as _, Ledger};
-    use soroban_sdk::testutils::{Ledger, MockAuth, MockAuthInvoke};
+    use soroban_sdk::testutils::{Address as _, Ledger, MockAuth, MockAuthInvoke};
     use soroban_sdk::token::{Client as TokenClient, StellarAssetClient};
     use soroban_sdk::{Address, Env, IntoVal, Symbol, TryFromVal, TryIntoVal};
 
@@ -720,12 +719,9 @@ mod tests {
         let credit_contract = Address::generate(&env);
         let auction_id = Symbol::new(&env, "unauth");
 
-        env.as_contract(&contract_id, || {
-            set_factory_contract(&env, &factory);
-        });
-
         // Use mock_all_auths for setup
         env.mock_all_auths();
+        client.set_factory_contract(&factory);
         client.init_auction(
             &auction_id,
             &AuctionMode::English,
@@ -762,12 +758,9 @@ mod tests {
         let credit_contract = Address::generate(&env);
         let auction_id = Symbol::new(&env, "auth_success");
 
-        env.as_contract(&contract_id, || {
-            set_factory_contract(&env, &factory);
-        });
-
         // Use mock_all_auths for setup
         env.mock_all_auths();
+        client.set_factory_contract(&factory);
         client.init_auction(
             &auction_id,
             &AuctionMode::English,
@@ -1338,21 +1331,89 @@ mod tests {
         assert_eq!(stored.highest_bid, 200_i128);
     }
 
-    // === Dutch Auction Tests ===
+    // === Dutch Decay Curve Tests ===
 
     #[test]
-    fn dutch_auction_price_at_start() {
+    fn test_compute_dutch_price_linear() {
+        use crate::compute_dutch_price;
+        use crate::types::DutchDecayCurve;
+
+        // start 500, floor 100, duration 1000
+        // t=0 -> 500
+        assert_eq!(compute_dutch_price(500, 100, 0, 1000, &DutchDecayCurve::Linear), 500);
+        // t=250 -> 400
+        assert_eq!(compute_dutch_price(500, 100, 250, 1000, &DutchDecayCurve::Linear), 400);
+        // t=500 -> 300
+        assert_eq!(compute_dutch_price(500, 100, 500, 1000, &DutchDecayCurve::Linear), 300);
+        // t=750 -> 200
+        assert_eq!(compute_dutch_price(500, 100, 750, 1000, &DutchDecayCurve::Linear), 200);
+        // t=1000 -> 100
+        assert_eq!(compute_dutch_price(500, 100, 1000, 1000, &DutchDecayCurve::Linear), 100);
+        // t=1200 -> 100 (clamped)
+        assert_eq!(compute_dutch_price(500, 100, 1200, 1000, &DutchDecayCurve::Linear), 100);
+    }
+
+    #[test]
+    fn test_compute_dutch_price_stepped() {
+        use crate::compute_dutch_price;
+        use crate::types::DutchDecayCurve;
+
+        // start 500, floor 100, duration 1000, steps 4 -> step_duration = 250
+        // drop = 400. Each step drops by 100.
+        let curve = DutchDecayCurve::Stepped(4);
+        assert_eq!(compute_dutch_price(500, 100, 0, 1000, &curve), 500);
+        assert_eq!(compute_dutch_price(500, 100, 100, 1000, &curve), 500);
+        assert_eq!(compute_dutch_price(500, 100, 249, 1000, &curve), 500);
+        
+        assert_eq!(compute_dutch_price(500, 100, 250, 1000, &curve), 400);
+        assert_eq!(compute_dutch_price(500, 100, 499, 1000, &curve), 400);
+        
+        assert_eq!(compute_dutch_price(500, 100, 500, 1000, &curve), 300);
+        assert_eq!(compute_dutch_price(500, 100, 749, 1000, &curve), 300);
+        
+        assert_eq!(compute_dutch_price(500, 100, 750, 1000, &curve), 200);
+        assert_eq!(compute_dutch_price(500, 100, 999, 1000, &curve), 200);
+        
+        assert_eq!(compute_dutch_price(500, 100, 1000, 1000, &curve), 100);
+        assert_eq!(compute_dutch_price(500, 100, 1200, 1000, &curve), 100);
+    }
+
+    #[test]
+    fn test_compute_dutch_price_exponential() {
+        use crate::compute_dutch_price;
+        use crate::types::DutchDecayCurve;
+
+        // start 500, floor 100, duration 1000, half_life 300
+        // drop = 400.
+        let curve = DutchDecayCurve::Exponential(300);
+        
+        // t=0 -> 500 (100% remaining)
+        assert_eq!(compute_dutch_price(500, 100, 0, 1000, &curve), 500);
+        
+        // t=300 -> 1 half life -> 50% remaining -> 100 + 400 * 0.5 = 300
+        assert_eq!(compute_dutch_price(500, 100, 300, 1000, &curve), 300);
+        
+        // t=600 -> 2 half lives -> 25% remaining -> 100 + 400 * 0.25 = 200
+        assert_eq!(compute_dutch_price(500, 100, 600, 1000, &curve), 200);
+        
+        // t=900 -> 3 half lives -> 12.5% remaining -> 100 + 400 * 0.125 = 150
+        assert_eq!(compute_dutch_price(500, 100, 900, 1000, &curve), 150);
+
+        // Never undershoots floor_price
+        assert!(compute_dutch_price(500, 100, 1200, 1000, &curve) >= 100);
+    }
+
+    #[test]
+    fn dutch_auction_stepped_integration() {
         let env = Env::default();
         env.mock_all_auths();
 
         let alice = Address::generate(&env);
-
         let contract_id = env.register(Auction, ());
         let client = AuctionClient::new(&env, &contract_id);
+        let auction_id = Symbol::new(&env, "dutch_stepped_int");
 
-        let auction_id = Symbol::new(&env, "dutch_start");
-
-        client.init_auction(
+        client.init_auction_with_curve(
             &auction_id,
             &AuctionMode::Dutch,
             &1000,
@@ -1361,117 +1422,64 @@ mod tests {
             &0_u32,
             &Some(500_i128),
             &Some(100_i128),
+            &DutchDecayCurve::Stepped(4),
         );
 
-        env.ledger().with_mut(|li| li.timestamp = 1000);
-        client.place_bid(&auction_id, &alice, &500_i128);
+        // At t=1200 (step 0 has finished, in step 1, price should be 400)
+        env.ledger().with_mut(|li| li.timestamp = 1200);
+        
+        // Bid of 399 should fail
+        let res = client.try_place_bid(&auction_id, &alice, &399_i128);
+        assert!(res.is_err());
+
+        // Bid of 400 should succeed
+        client.place_bid(&auction_id, &alice, &400_i128);
 
         let stored: crate::types::AuctionState = env
             .as_contract(&contract_id, || env.storage().persistent().get(&auction_id))
             .unwrap();
-
         assert_eq!(stored.status, AuctionStatus::Closed);
-        assert_eq!(stored.highest_bidder.unwrap(), alice);
-        assert_eq!(stored.highest_bid, 500_i128);
+        assert_eq!(stored.highest_bid, 400_i128);
     }
 
     #[test]
-    fn dutch_auction_price_at_mid() {
+    fn init_auction_panics_on_invalid_curve_params() {
         let env = Env::default();
         env.mock_all_auths();
-
-        let alice = Address::generate(&env);
-
         let contract_id = env.register(Auction, ());
         let client = AuctionClient::new(&env, &contract_id);
 
-        let auction_id = Symbol::new(&env, "dutch_mid");
+        // Stepped with 0 steps must panic
+        let res = catch_unwind(AssertUnwindSafe(|| {
+            client.init_auction_with_curve(
+                &Symbol::new(&env, "invalid_stepped"),
+                &AuctionMode::Dutch,
+                &1000,
+                &2000,
+                &50_i128,
+                &0_u32,
+                &Some(500_i128),
+                &Some(100_i128),
+                &DutchDecayCurve::Stepped(0),
+            );
+        }));
+        assert!(res.is_err());
 
-        client.init_auction(
-            &auction_id,
-            &AuctionMode::Dutch,
-            &1000,
-            &2000,
-            &50_i128,
-            &0_u32,
-            &Some(500_i128),
-            &Some(100_i128),
-        );
-
-        env.ledger().with_mut(|li| li.timestamp = 1500);
-        client.place_bid(&auction_id, &alice, &300_i128);
-
-        let stored: crate::types::AuctionState = env
-            .as_contract(&contract_id, || env.storage().persistent().get(&auction_id))
-            .unwrap();
-
-        assert_eq!(stored.status, AuctionStatus::Closed);
-        assert_eq!(stored.highest_bidder.unwrap(), alice);
-        assert_eq!(stored.highest_bid, 300_i128);
-    }
-
-    #[test]
-    fn dutch_auction_bid_below_current_price_fails() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let alice = Address::generate(&env);
-
-        let contract_id = env.register(Auction, ());
-        let client = AuctionClient::new(&env, &contract_id);
-
-        let auction_id = Symbol::new(&env, "dutch_low_bid");
-
-        client.init_auction(
-            &auction_id,
-            &AuctionMode::Dutch,
-            &1000,
-            &2000,
-            &50_i128,
-            &0_u32,
-            &Some(500_i128),
-            &Some(100_i128),
-        );
-
-        env.ledger().with_mut(|li| li.timestamp = 1500);
-        let result = client.try_place_bid(&auction_id, &alice, &250_i128);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn english_mode_unchanged_with_new_signature() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let alice = Address::generate(&env);
-        let bob = Address::generate(&env);
-
-        let contract_id = env.register(Auction, ());
-        let client = AuctionClient::new(&env, &contract_id);
-
-        let auction_id = Symbol::new(&env, "english_unchanged");
-
-        client.init_auction(
-            &auction_id,
-            &AuctionMode::English,
-            &0,
-            &1000,
-            &50_i128,
-            &0_u32,
-            &None,
-            &None,
-        );
-
-        client.place_bid(&auction_id, &alice, &100_i128);
-        client.place_bid(&auction_id, &bob, &200_i128);
-
-        let stored: crate::types::AuctionState = env
-            .as_contract(&contract_id, || env.storage().persistent().get(&auction_id))
-            .unwrap();
-
-        assert_eq!(stored.status, AuctionStatus::Open);
-        assert_eq!(stored.highest_bidder.unwrap(), bob);
-        assert_eq!(stored.highest_bid, 200_i128);
+        // Exponential with 0 half-life must panic
+        let res2 = catch_unwind(AssertUnwindSafe(|| {
+            client.init_auction_with_curve(
+                &Symbol::new(&env, "invalid_exponential"),
+                &AuctionMode::Dutch,
+                &1000,
+                &2000,
+                &50_i128,
+                &0_u32,
+                &Some(500_i128),
+                &Some(100_i128),
+                &DutchDecayCurve::Exponential(0),
+            );
+        }));
+        assert!(res2.is_err());
     }
 }
 
@@ -1491,6 +1499,8 @@ mod reentrancy_exploration {
     extern crate std;
     use super::*;
     use crate::errors::AuctionError;
+    use crate::types::{AuctionMode, AuctionStatus, DutchDecayCurve};
+    use crate::{Auction, AuctionClient};
     use soroban_sdk::testutils::{Address as _, Ledger as _};
     use soroban_sdk::{Address, Env, Symbol};
 
@@ -1709,6 +1719,8 @@ mod reentrancy_exploration {
 mod reentrancy_preservation {
     extern crate std;
     use super::*;
+    use crate::types::{AuctionMode, AuctionStatus, DutchDecayCurve};
+    use crate::{Auction, AuctionClient};
     use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
     use soroban_sdk::{Address, Env, Symbol, TryFromVal, TryIntoVal};
 

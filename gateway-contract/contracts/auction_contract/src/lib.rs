@@ -97,8 +97,7 @@ fn min_next_bid(highest_bid: i128, min_increment_bps: u32) -> i128 {
 
 /// Computes the current Dutch auction price based on elapsed time.
 ///
-/// The price decays linearly from start_price to floor_price over the auction duration.
-/// Formula: current_price = start_price - ((start_price - floor_price) * elapsed_time) / duration
+/// The price decays according to the configured DutchDecayCurve from start_price to floor_price.
 ///
 /// This function is overflow-safe and ensures monotone decreasing prices.
 fn compute_dutch_price(
@@ -106,6 +105,7 @@ fn compute_dutch_price(
     floor_price: i128,
     elapsed_time: u64,
     duration: u64,
+    decay_curve: &DutchDecayCurve,
 ) -> i128 {
     if duration == 0 {
         return floor_price; // Avoid division by zero
@@ -120,26 +120,97 @@ fn compute_dutch_price(
         .checked_sub(floor_price)
         .expect("start_price must be >= floor_price");
 
-    // Compute the portion of time elapsed as a fraction
-    // Use checked arithmetic to prevent overflow
-    let elapsed_i128 = elapsed_time as i128;
-    let duration_i128 = duration as i128;
+    match decay_curve {
+        DutchDecayCurve::Linear => {
+            let elapsed_i128 = elapsed_time as i128;
+            let duration_i128 = duration as i128;
+            let drop_so_far = price_drop
+                .checked_mul(elapsed_i128)
+                .expect("overflow in Dutch price calculation")
+                .checked_div(duration_i128)
+                .expect("division should succeed with positive duration");
+            start_price
+                .checked_sub(drop_so_far)
+                .expect("current price should not underflow")
+                .max(floor_price)
+        }
+        DutchDecayCurve::Stepped(steps) => {
+            let steps = *steps;
+            if steps == 0 {
+                return floor_price;
+            }
+            let step_duration = duration / (steps as u64);
+            let completed_steps = if step_duration == 0 {
+                steps as u64
+            } else {
+                (elapsed_time / step_duration).min(steps as u64)
+            };
+            let drop_so_far = price_drop
+                .checked_mul(completed_steps as i128)
+                .expect("overflow in Stepped price calculation")
+                .checked_div(steps as i128)
+                .expect("division should succeed");
+            start_price
+                .checked_sub(drop_so_far)
+                .expect("current price should not underflow")
+                .max(floor_price)
+        }
+        DutchDecayCurve::Exponential(half_life_secs) => {
+            let half_life = *half_life_secs;
+            if half_life == 0 {
+                return floor_price;
+            }
+            let integer_part = elapsed_time / (half_life as u64);
+            let fraction_part = elapsed_time % (half_life as u64);
 
-    // Compute drop so far: (price_drop * elapsed_time) / duration
-    // This is safe because we ensure duration > 0 and values are reasonable
-    let drop_so_far = price_drop
-        .checked_mul(elapsed_i128)
-        .expect("overflow in Dutch price calculation")
-        .checked_div(duration_i128)
-        .expect("division should succeed with positive duration");
+            if integer_part >= 128 {
+                return floor_price;
+            }
 
-    // Current price = start_price - drop_so_far
-    let current_price = start_price
-        .checked_sub(drop_so_far)
-        .expect("current price should not underflow");
+            // Approximate 2^(-x) for x = fraction_part / half_life using Taylor series scaled by 2^30.
+            // ln(2) * 2^30 = 744261118
+            let ln2_scaled = 744_261_118_u128;
+            let y_fixed = (fraction_part as u128 * ln2_scaled) / (half_life as u128);
 
-    // Ensure we never go below floor (shouldn't happen with correct math, but safety check)
-    current_price.max(floor_price)
+            let y2 = (y_fixed * y_fixed) >> 30;
+            let y3 = (y2 * y_fixed) >> 30;
+            let y4 = (y3 * y_fixed) >> 30;
+            let y5 = (y4 * y_fixed) >> 30;
+            let y6 = (y5 * y_fixed) >> 30;
+
+            let exp_y = (1 << 30)
+                - (y_fixed as i128)
+                + (y2 as i128 / 2)
+                - (y3 as i128 / 6)
+                + (y4 as i128 / 24)
+                - (y5 as i128 / 120)
+                + (y6 as i128 / 720);
+
+            let exp_y_clamped = exp_y.max(0).min(1 << 30) as u128;
+            let shift_total = 30 + integer_part;
+
+            let remaining = if let Some(prod) = (price_drop as u128).checked_mul(exp_y_clamped) {
+                if shift_total >= 128 {
+                    0
+                } else {
+                    prod >> shift_total
+                }
+            } else {
+                let price_drop_scaled = (price_drop as u128) >> 30;
+                let prod = price_drop_scaled * exp_y_clamped;
+                if integer_part >= 128 {
+                    0
+                } else {
+                    prod >> integer_part
+                }
+            };
+
+            floor_price
+                .checked_add(remaining as i128)
+                .expect("overflow")
+                .max(floor_price)
+        }
+    }
 }
 
 #[contract]
@@ -165,6 +236,32 @@ impl Auction {
         dutch_start_price: Option<i128>,
         dutch_floor_price: Option<i128>,
     ) {
+        Self::init_auction_with_curve(
+            env,
+            auction_id,
+            mode,
+            start_time,
+            end_time,
+            min_bid,
+            min_increment_bps,
+            dutch_start_price,
+            dutch_floor_price,
+            DutchDecayCurve::Linear,
+        );
+    }
+
+    pub fn init_auction_with_curve(
+        env: Env,
+        auction_id: Symbol,
+        mode: AuctionMode,
+        start_time: u64,
+        end_time: u64,
+        min_bid: i128,
+        min_increment_bps: u32,
+        dutch_start_price: Option<i128>,
+        dutch_floor_price: Option<i128>,
+        decay_curve: DutchDecayCurve,
+    ) {
         if start_time >= end_time {
             panic!("invalid times");
         }
@@ -183,6 +280,19 @@ impl Auction {
             if start < min_bid {
                 panic!("dutch_start_price must be >= min_bid");
             }
+            match &decay_curve {
+                DutchDecayCurve::Stepped(steps) => {
+                    if *steps == 0 {
+                        panic!("steps must be greater than zero");
+                    }
+                }
+                DutchDecayCurve::Exponential(half_life) => {
+                    if *half_life == 0 {
+                        panic!("half_life must be greater than zero");
+                    }
+                }
+                _ => {}
+            }
         }
 
         let config = AuctionConfig {
@@ -194,6 +304,7 @@ impl Auction {
             min_increment_bps,
             dutch_start_price,
             dutch_floor_price,
+            decay_curve,
         };
         let state = AuctionState {
             config,
@@ -204,6 +315,7 @@ impl Auction {
         env.storage().persistent().set(&auction_id, &state);
         bump_auction_state_ttl(&env, &auction_id);
     }
+
 
     /// Register the factory/credit contract address that is permitted to call
     /// `settle_default_liquidation`. Must be called once after deployment.
@@ -326,7 +438,7 @@ impl Auction {
                     .unwrap_or(state.config.min_bid);
 
                 let current_price =
-                    compute_dutch_price(start_price, floor_price, elapsed_time, duration);
+                    compute_dutch_price(start_price, floor_price, elapsed_time, duration, &state.config.decay_curve);
 
                 // Bid must be at least current price
                 if amount < current_price {
@@ -369,10 +481,8 @@ impl Auction {
         credit_contract: Address,
         borrower: Address,
     ) -> i128 {
-        let factory = get_factory_contract(&env).unwrap_or_else(|| panic!(AuctionError::NoFactoryContract));
-        if env.invoker() != factory {
-            panic!(AuctionError::Unauthorized);
-        }
+        let factory = get_factory_contract(&env).unwrap_or_else(|| env.panic_with_error(AuctionError::NoFactoryContract));
+        factory.require_auth();
 
         let state: AuctionState = env
             .storage()

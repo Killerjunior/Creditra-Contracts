@@ -83,6 +83,14 @@ pub enum AuctionKey {
 }
 
 #[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DutchDecayCurve {
+    Linear,
+    Stepped(u32),
+    Exponential(u32),
+}
+
+#[contracttype]
 #[derive(Clone)]
 pub struct AuctionConfig {
     pub mode: AuctionMode,
@@ -98,6 +106,7 @@ pub struct AuctionConfig {
     pub dutch_start_price: Option<i128>,
     /// Floor price for Dutch auction (only used in Dutch mode)
     pub dutch_floor_price: Option<i128>,
+    pub decay_curve: DutchDecayCurve,
 }
 
 #[contracttype]

@@ -61,6 +61,33 @@ pub fn settle_default_liquidation(
 - This method is signaling-only and does not perform token transfers.
 - Credit accounting update is performed by `settle_default_liquidation` on the credit contract.
 
+### Function: `init_auction_with_curve`
+
+Initializes an auction with a configurable Dutch auction price decay curve.
+
+#### Interface
+
+```rust
+pub fn init_auction_with_curve(
+		env: Env,
+		auction_id: Symbol,
+		mode: AuctionMode,
+		start_time: u64,
+		end_time: u64,
+		min_bid: i128,
+		min_increment_bps: u32,
+		dutch_start_price: Option<i128>,
+		dutch_floor_price: Option<i128>,
+		decay_curve: DutchDecayCurve,
+)
+```
+
+#### Decay Curves (`DutchDecayCurve`)
+
+- `Linear`: Price decays linearly from `start_price` to `floor_price` over the auction duration.
+- `Stepped(steps)`: Price decays in discrete steps. The duration is split into `steps` intervals, dropping price monotonically at each step interval.
+- `Exponential(half_life_secs)`: Price decays exponentially according to $p(t) = \text{floor} + (\text{start} - \text{floor}) \cdot 2^{-t / \text{half\_life}}$. Uses checked fixed-point arithmetic.
+
 ### Function: `create_auction`
 
 Creates a new auction identified by `id`.
