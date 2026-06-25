@@ -1,0 +1,39 @@
+[package]
+name = "auction-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+# cargo-fuzz requires this metadata marker.
+[package.metadata]
+cargo-fuzz = true
+
+# cargo-fuzz manages its own workspace so that its nightly/sanitizer flags
+# don't bleed into the parent workspace build.
+[workspace]
+
+[[bin]]
+name = "dutch_price_monotone"
+path = "fuzz_targets/dutch_price_monotone.rs"
+test = false
+doc = false
+bench = false
+
+[dependencies]
+# libFuzzer integration — cargo-fuzz injects the sanitizer flags automatically.
+libfuzzer-sys = "0.4"
+# Structured input generation via the Arbitrary trait.
+arbitrary = { version = "1", features = ["derive"] }
+# Re-use the auction contract's pure price logic; `fuzz` feature widens
+# visibility of `compute_dutch_price` and opts back into `std`.
+gateway-auction = { path = "..", features = ["fuzz"] }
+
+[profile.release]
+# Retain debug info for better crash symbolisation in fuzz reports.
+debug = true
+# Keep overflow checks so integer wrapping surfaces as a bug rather than
+# silently wrapping.
+overflow-checks = true
+# Fuzzing requires unwinding panics so that catch_unwind works inside the
+# fuzz target (used to handle the expect() panic on overflow gracefully).
+panic = "unwind"

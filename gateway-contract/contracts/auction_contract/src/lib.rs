@@ -1,4 +1,4 @@
-#![cfg_attr(not(test), no_std)]
+#![cfg_attr(not(any(test, feature = "fuzz")), no_std)]
 
 //! # gateway-auction
 //!
@@ -258,7 +258,7 @@ impl Auction {
         }
 
         let now = env.ledger().timestamp();
-        
+
         if now >= state.config.end_time {
             panic!("auction closed");
         }
@@ -460,3 +460,13 @@ extern crate std;
 
 #[cfg(test)]
 mod test;
+
+/// Public re-exports used exclusively by the `auction-fuzz` crate.
+///
+/// This module is compiled only when `features = ["fuzz"]` is set, keeping the
+/// production WASM blob unaffected.  External callers should never depend on
+/// this module directly.
+#[cfg(feature = "fuzz")]
+pub mod fuzz_exports {
+    pub use super::compute_dutch_price;
+}

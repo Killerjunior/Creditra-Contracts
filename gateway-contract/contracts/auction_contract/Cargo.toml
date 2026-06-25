@@ -11,10 +11,15 @@ readme = "auction.md"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# Widens `compute_dutch_price` visibility to `pub` so the fuzz crate can call
+# it without going through the full Soroban contract entry-point machinery.
+fuzz = []
+
 [dependencies]
 soroban-sdk = { workspace = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
 
- 
+
