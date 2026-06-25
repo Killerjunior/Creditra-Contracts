@@ -2,7 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main, master, develop, "feature/**"]
+    branches:
+      [main, master, develop, "feature/**", "feat/**", "task/**", "bug/**"]
   pull_request:
     branches: [main, master, develop]
 
@@ -148,4 +149,3 @@ jobs:
             echo "::error::WASM size ${SIZE_BYTES} exceeds threshold ${THRESHOLD_BYTES}."
             exit 1
           fi
-
