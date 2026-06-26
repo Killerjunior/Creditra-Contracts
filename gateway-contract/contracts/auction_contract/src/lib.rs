@@ -460,3 +460,6 @@ extern crate std;
 
 #[cfg(test)]
 mod test;
+
+#[cfg(test)]
+mod test_refund_atomicity;
