@@ -863,3 +863,75 @@ pub fn set_penalty_surcharge_bps(env: &Env, bps: u32) {
 pub fn set_borrower_unblocked(env: &Env, borrower: &Address) {
     set_borrower_blocked(env, borrower, false);
 }
+
+
+// ── Oracle feed set & quorum storage ─────────────────────────────────────────
+
+/// Get the registered oracle feed addresses, if set.
+pub fn get_oracle_feed_set(env: &Env) -> soroban_sdk::Vec<Address> {
+    env.storage()
+        .instance()
+        .get(&DataKey::OracleFeedSet)
+        .unwrap_or_else(|| soroban_sdk::Vec::new(env))
+}
+
+/// Set the registered oracle feed addresses (admin only, enforced by caller).
+pub fn set_oracle_feed_set(env: &Env, feeds: &soroban_sdk::Vec<Address>) {
+    env.storage()
+        .instance()
+        .set(&DataKey::OracleFeedSet, feeds);
+}
+
+/// Get the oracle quorum minimum (default 1 if not set).
+pub fn get_oracle_quorum_min(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::OracleQuorumMin)
+        .unwrap_or(1u32)
+}
+
+/// Set the oracle quorum minimum (admin only, enforced by caller).
+pub fn set_oracle_quorum_min(env: &Env, quorum: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::OracleQuorumMin, &quorum);
+}
+
+/// Compute the median of a Vec<i128> using stack-allocated insertion sort.
+///
+/// - n must be <= 9 (budget constraint; caller enforces via quorum cap).
+/// - Returns `None` if `prices` is empty.
+/// - Even-length: averages the two middle values using `checked_add`.
+pub fn compute_median(env: &Env, prices: &soroban_sdk::Vec<i128>) -> Option<i128> {
+    let len = prices.len() as usize;
+    if len == 0 {
+        return None;
+    }
+
+    let mut arr = [0i128; 9];
+    for i in 0..len {
+        arr[i] = prices.get(i as u32).unwrap();
+    }
+    let slice = &mut arr[..len];
+
+    // Insertion sort — deterministic, no alloc, no unwrap
+    for i in 1..slice.len() {
+        let key = slice[i];
+        let mut j = i;
+        while j > 0 && slice[j - 1] > key {
+            slice[j] = slice[j - 1];
+            j -= 1;
+        }
+        slice[j] = key;
+    }
+
+    let mid = slice.len() / 2;
+    if slice.len() % 2 == 0 {
+        let sum = slice[mid - 1]
+            .checked_add(slice[mid])
+            .unwrap_or_else(|| env.panic_with_error(crate::types::ContractError::Overflow));
+        Some(sum / 2)
+    } else {
+        Some(slice[mid])
+    }
+}

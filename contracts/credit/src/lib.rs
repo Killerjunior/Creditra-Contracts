@@ -1141,7 +1141,7 @@ impl Credit {
         borrower: Address,
         recovered_amount: i128,
         settlement_id: Symbol,
-        oracle_price: Option<i128>,
+        feeds: soroban_sdk::Vec<(Address, i128)>,
     ) {
         // Reentrancy guard: settlement touches accounting and may interact
         // with an external auction contract, so we guard the full path.
@@ -1149,38 +1149,43 @@ impl Credit {
 
         // Oracle price-feed circuit breaker: validate price before settlement.
         if let Some(cfg) = crate::storage::get_oracle_config(&env) {
-            let price = oracle_price.unwrap_or_else(|| {
-                clear_reentrancy_guard(&env);
-                env.panic_with_error(ContractError::OraclePriceInvalid)
-            });
-
-            if price <= 0 {
-                clear_reentrancy_guard(&env);
-                env.panic_with_error(ContractError::OraclePriceInvalid);
+            // --- Quorum check ---
+            let quorum_min = storage::get_oracle_quorum_min(&env);
+            if feeds.len() < quorum_min {
+                return Err(ContractError::OraclePriceInvalid);
             }
 
-            let now = env.ledger().timestamp();
-
-            if let Some(last_ts) = crate::storage::get_oracle_last_price_ts(&env) {
-                let age = now.saturating_sub(last_ts);
-                if age > cfg.max_age_seconds {
-                    clear_reentrancy_guard(&env);
-                    env.panic_with_error(ContractError::OraclePriceStale);
+            // --- Validate feeds are registered and collect prices ---
+            let feed_set = storage::get_oracle_feed_set(&env);
+            let mut prices: soroban_sdk::Vec<i128> = soroban_sdk::Vec::new(&env);
+            for i in 0..feeds.len() {
+                let (addr, feed_price) = feeds.get(i).unwrap();
+                if !feed_set.is_empty() && !feed_set.contains(&addr) {
+                    return Err(ContractError::OraclePriceInvalid);
                 }
+                prices.push_back(feed_price);
+            }
 
-                if let Some(last_price) = crate::storage::get_oracle_last_price(&env) {
+            // --- Compute median; deviation check applies to median only ---
+            let price = storage::compute_median(&env, &prices)
+                .ok_or(ContractError::OraclePriceInvalid)?;
+
+            if let Some(cfg) = storage::get_oracle_config(&env) {
+                if let Some(last_price) = storage::get_oracle_last_price(&env) {
                     let deviation = compute_deviation_bps(price, last_price).unwrap_or_else(|| {
-                        clear_reentrancy_guard(&env);
                         env.panic_with_error(ContractError::OraclePriceInvalid)
                     });
-                    if deviation > cfg.max_deviation_bps {
-                        clear_reentrancy_guard(&env);
-                        env.panic_with_error(ContractError::OraclePriceDeviation);
+                    if deviation > cfg.max_deviation_bps as i128 {
+                        return Err(ContractError::OraclePriceInvalid);
+                    }
+                }
+                if let Some(last_ts) = storage::get_oracle_last_price_ts(&env) {
+                    if now.saturating_sub(last_ts) > cfg.max_age_seconds {
+                        return Err(ContractError::OraclePriceInvalid);
                     }
                 }
             }
 
-            crate::storage::set_oracle_last_price(&env, price, now);
             publish_oracle_price_accepted_event(&env, price, now);
         }
 
