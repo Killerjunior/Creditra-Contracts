@@ -1149,6 +1149,7 @@ impl Credit {
         borrower: Address,
         recovered_amount: i128,
         settlement_id: Symbol,
+        close_factor_bps: u32,
         oracle_price: Option<i128>,
     ) {
         // Reentrancy guard: settlement touches accounting and may interact
@@ -1211,6 +1212,7 @@ impl Credit {
             borrower,
             recovered_amount,
             settlement_id,
+            close_factor_bps,
         );
         clear_reentrancy_guard(&env);
     }

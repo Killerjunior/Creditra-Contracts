@@ -691,6 +691,7 @@ pub fn settle_default_liquidation(
     borrower: Address,
     recovered_amount: i128,
     settlement_id: Symbol,
+    close_factor_bps: u32,
 ) {
     require_admin_auth(&env);
 
@@ -698,9 +699,13 @@ pub fn settle_default_liquidation(
         env.panic_with_error(ContractError::InvalidAmount);
     }
 
+    if close_factor_bps == 0 || close_factor_bps > 10_000 {
+        env.panic_with_error(ContractError::InvalidAmount);
+    }
+
     let settlement_key = liquidation_settlement_key(&borrower, &settlement_id);
     if env.storage().persistent().has(&settlement_key) {
-        env.panic_with_error(ContractError::AlreadyInitialized); // Or a specific LiquidationAlreadyApplied
+        env.panic_with_error(ContractError::AlreadyInitialized);
     }
 
     let stored_line: CreditLineData = env
@@ -717,8 +722,15 @@ pub fn settle_default_liquidation(
         env.panic_with_error(ContractError::CreditLineDefaulted);
     }
 
-    if recovered_amount > credit_line.utilized_amount {
-        env.panic_with_error(ContractError::OverLimit); // Or a specific error
+    // Compute the maximum recoverable amount for this settlement
+    let target_recovery = credit_line
+        .utilized_amount
+        .checked_mul(close_factor_bps as i128)
+        .unwrap_or_else(|| env.panic_with_error(ContractError::Overflow))
+        / 10_000;
+
+    if recovered_amount > target_recovery {
+        env.panic_with_error(ContractError::OverLimit);
     }
 
     credit_line.utilized_amount = credit_line
@@ -758,6 +770,7 @@ pub fn settle_default_liquidation(
             recovered_amount,
             remaining_utilized_amount: credit_line.utilized_amount,
             status: credit_line.status,
+            close_factor_bps,
         },
     );
 }

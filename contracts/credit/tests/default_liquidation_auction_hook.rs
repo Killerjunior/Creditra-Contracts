@@ -88,7 +88,7 @@ fn settle_partial_default_liquidation_and_block_replay() {
     let client = CreditClient::new(&env, &contract_id);
     let settlement_id = Symbol::new(&env, "auc_001");
 
-    client.settle_default_liquidation(&borrower, &300_i128, &settlement_id, &None);
+    client.settle_default_liquidation(&borrower, &300_i128, &settlement_id, &10_000_u32, &None);
     assert!(has_event_topic(&env, "liq_setl"));
 
     let line = client.get_credit_line(&borrower).unwrap();
@@ -96,7 +96,7 @@ fn settle_partial_default_liquidation_and_block_replay() {
     assert_eq!(line.utilized_amount, 700);
 
     let replay = catch_unwind(AssertUnwindSafe(|| {
-        client.settle_default_liquidation(&borrower, &50_i128, &settlement_id, &None);
+        client.settle_default_liquidation(&borrower, &50_i128, &settlement_id, &10_000_u32, &None);
     }));
     assert!(replay.is_err(), "replay settlement should panic");
 }
@@ -106,7 +106,7 @@ fn settle_full_default_liquidation_closes_credit_line() {
     let (env, contract_id, borrower) = setup_defaulted_line(450);
     let client = CreditClient::new(&env, &contract_id);
 
-    client.settle_default_liquidation(&borrower, &450_i128, &Symbol::new(&env, "auc_fin"), &None);
+    client.settle_default_liquidation(&borrower, &450_i128, &Symbol::new(&env, "auc_fin"), &10_000_u32, &None);
     assert!(has_event_topic(&env, "closed"));
     assert!(has_event_topic(&env, "liq_setl"));
 
@@ -190,7 +190,7 @@ fn settle_with_auction_contract_configured_reduces_debt() {
     setup_auction(&env, &contract_id, &auction_addr, &settlement_id, 400_i128);
 
     // Settle partial — will atomically invoke the configured auction hook!
-    client.settle_default_liquidation(&borrower, &400_i128, &settlement_id, &None);
+    client.settle_default_liquidation(&borrower, &400_i128, &settlement_id, &10_000_u32, &None);
 
     let line = client.get_credit_line(&borrower).unwrap();
     assert_eq!(line.status, CreditStatus::Defaulted);
@@ -212,7 +212,7 @@ fn settle_full_with_auction_contract_closes_line() {
     setup_auction(&env, &contract_id, &auction_addr, &settlement_id, 800_i128);
 
     // Full settlement: recovered == utilized → should close line atomically
-    client.settle_default_liquidation(&borrower, &800_i128, &settlement_id, &None);
+    client.settle_default_liquidation(&borrower, &800_i128, &settlement_id, &10_000_u32, &None);
 
     let line = client.get_credit_line(&borrower).unwrap();
     assert_eq!(line.status, CreditStatus::Closed);
