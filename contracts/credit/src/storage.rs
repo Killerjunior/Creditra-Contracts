@@ -889,9 +889,7 @@ pub fn get_late_fee_flat(env: &Env) -> i128 {
 /// - **Type**: Instance storage
 /// - **Key**: [`DataKey::LateFeeFlat`]
 pub fn set_late_fee_flat(env: &Env, fee: i128) {
-    env.storage()
-        .instance()
-        .set(&DataKey::LateFeeFlat, &fee);
+    env.storage().instance().set(&DataKey::LateFeeFlat, &fee);
 }
 
 // ── Borrower blocklist helpers ───────────────────────────────────────────────

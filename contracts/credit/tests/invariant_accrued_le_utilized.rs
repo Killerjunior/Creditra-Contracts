@@ -216,8 +216,7 @@ fn run_seed(seed: u64) -> Counters {
     for step in 0..STEPS_PER_SEED {
         // Advance ledger time by 1 day to 1 year — drives meaningful accrual.
         let delta_secs = rng.range_u64(365 * 24 * 3600);
-        env.ledger()
-            .with_mut(|l| l.timestamp += delta_secs);
+        env.ledger().with_mut(|l| l.timestamp += delta_secs);
 
         let bidx = rng.index(BORROWER_COUNT);
         let borrower = borrowers.get(bidx as u32).unwrap();
@@ -270,12 +269,7 @@ fn run_seed(seed: u64) -> Counters {
     // This exercises the specific lifecycle mandated by the issue description.
     let scenario_borrower = borrowers.get(0).unwrap();
     // Ensure the line is open for this borrower.
-    let _ = client.try_open_credit_line(
-        &scenario_borrower,
-        &100_000_i128,
-        &2_000_u32,
-        &50_u32,
-    );
+    let _ = client.try_open_credit_line(&scenario_borrower, &100_000_i128, &2_000_u32, &50_u32);
     assert_accrued_le_utilized(&client, "scenario:open");
 
     // 1. Draw

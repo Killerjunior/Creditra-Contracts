@@ -2438,13 +2438,13 @@ mod test_smoke_coverage_extra {
 }
 
 #[cfg(test)]
-    pub mod test_helpers {
+pub mod test_helpers {
     use crate::types::ContractError;
     use soroban_sdk::{
-        contract, contractimpl,
+        contract, contractimpl, symbol_short,
         testutils::Address as _,
         token::{Client as TokenClient, StellarAssetClient},
-        symbol_short, Address, Env, Symbol,
+        Address, Env, Symbol,
     };
     pub struct MockLiquidityToken {
         pub address: Address,
@@ -2549,9 +2549,10 @@ mod test_smoke_coverage_extra {
             env.storage()
                 .instance()
                 .set(&Symbol::new(&env, "fail_transfer"), &fail_transfer);
-            env.storage()
-                .instance()
-                .set(&Symbol::new(&env, "fail_transfer_from"), &fail_transfer_from);
+            env.storage().instance().set(
+                &Symbol::new(&env, "fail_transfer_from"),
+                &fail_transfer_from,
+            );
         }
 
         pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
@@ -5289,8 +5290,8 @@ mod test_mock_liquidity_token {
 
     #[cfg(test)]
     mod test_utilization_cap {
-        use super::*;
         use super::test_helpers::MockLiquidityToken;
+        use super::*;
         use soroban_sdk::Env;
 
         fn setup_with_cap_env(

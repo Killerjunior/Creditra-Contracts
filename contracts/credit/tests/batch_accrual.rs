@@ -50,7 +50,10 @@ fn accrue_batch_enforces_hard_cap() {
         client.accrue_batch(&borrowers);
     }));
 
-    assert!(result.is_err(), "accrue_batch must reject oversized batches");
+    assert!(
+        result.is_err(),
+        "accrue_batch must reject oversized batches"
+    );
 }
 
 #[test]
@@ -102,4 +105,3 @@ fn accrue_batch_skips_missing_and_non_active_lines() {
     assert_eq!(event.accrued_amount, 10_000);
     assert_eq!(event.new_utilized_amount, 110_000);
 }
-

@@ -396,8 +396,10 @@ pub struct ContractUpgradedEvent {
 }
 
 pub fn publish_contract_upgraded_event(env: &Env, event: ContractUpgradedEvent) {
-    env.events()
-        .publish((symbol_short!("credit"), Symbol::new(env, "upgraded")), event);
+    env.events().publish(
+        (symbol_short!("credit"), Symbol::new(env, "upgraded")),
+        event,
+    );
 }
 
 pub fn publish_oracle_config_set_event(env: &Env, max_deviation_bps: u32, max_age_seconds: u64) {
@@ -424,10 +426,8 @@ pub struct LateFeeChargedEvent {
 
 /// Publish a late fee charged event when a missed installment is detected.
 pub fn publish_late_fee_charged_event(env: &Env, event: LateFeeChargedEvent) {
-    env.events().publish(
-        (symbol_short!("credit"), symbol_short!("late_fee")),
-        event,
-    );
+    env.events()
+        .publish((symbol_short!("credit"), symbol_short!("late_fee")), event);
 }
 
 /// Publish a grace waiver applied event when a suspended line's accrual uses the grace period.

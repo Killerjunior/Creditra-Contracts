@@ -16,7 +16,9 @@ use creditra_credit::{Credit, CreditClient};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn setup_contract_with_bounds(max_credit_limit: i128) -> (Env, CreditClient<'static>, Address, Address) {
+fn setup_contract_with_bounds(
+    max_credit_limit: i128,
+) -> (Env, CreditClient<'static>, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -56,7 +58,6 @@ fn open_line_and_draw(
 
 // ── Test Matrix ───────────────────────────────────────────────────────────────
 
-
 #[test]
 fn test_limit_increase_matrix_success_in_range() {
     // Case 1: Success
@@ -78,7 +79,11 @@ fn test_limit_increase_matrix_success_in_range() {
     assert_eq!(line.credit_limit, new_limit);
     assert_eq!(line.utilized_amount, utilized);
     // When limit >= utilized, the line should be Active.
-    assert_eq!(line.status, CreditStatus::Active, "Expected Active when limit >= utilized");
+    assert_eq!(
+        line.status,
+        CreditStatus::Active,
+        "Expected Active when limit >= utilized"
+    );
 
     let _ = env; // silence unused warning in older toolchains
 }
@@ -108,7 +113,10 @@ fn test_limit_increase_matrix_fail_soft_noop_or_repayment_error_below_utilized()
         &new_risk_score,
     );
 
-    assert!(result.is_err(), "Expected contract error when decreasing below utilization");
+    assert!(
+        result.is_err(),
+        "Expected contract error when decreasing below utilization"
+    );
     let err = result.err().unwrap();
 
     assert_eq!(
@@ -142,7 +150,10 @@ fn test_limit_increase_matrix_out_of_bounds_increase_above_max() {
         &new_risk_score,
     );
 
-    assert!(result.is_err(), "Expected LimitOutOfBounds when increasing above max");
+    assert!(
+        result.is_err(),
+        "Expected LimitOutOfBounds when increasing above max"
+    );
     let err = result.err().unwrap();
 
     assert_eq!(
@@ -151,4 +162,3 @@ fn test_limit_increase_matrix_out_of_bounds_increase_above_max() {
         "Expected LimitOutOfBounds discriminant (34)"
     );
 }
-
